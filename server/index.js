@@ -217,12 +217,19 @@ app.delete('/api/products/:id', requireAdmin, asyncRoute(async (req, res) => {
   res.json({ deleted: true })
 }))
 
+// Keep API misses in JSON too, so the frontend never tries to parse Express's
+// default HTML 404 page as JSON.
+app.use('/api', (_req, res) => {
+  res.status(404).json({ error: 'API route not found.' })
+})
+
 app.use((error, _req, res, _next) => {
   console.error(error)
   res.status(500).json({ error: 'The request could not be completed.' })
 })
 
 export { app }
+export default app
 
 if (!process.env.VERCEL) {
   app.listen(port, () => {
