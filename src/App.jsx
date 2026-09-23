@@ -12,6 +12,18 @@ function readProducts() {
   try { return JSON.parse(localStorage.getItem(STORE)) || sampleProducts } catch { return sampleProducts }
 }
 
+async function readJsonResponse(response) {
+  const text = await response.text()
+  let data
+  try {
+    data = text ? JSON.parse(text) : {}
+  } catch {
+    const detail = text.trim().slice(0, 300) || response.statusText || 'Empty response body'
+    throw new Error(`Server returned non-JSON (HTTP ${response.status}): ${detail}`)
+  }
+  return data
+}
+
 function App() {
   const [items, setItems] = useState(readProducts)
   const [category, setCategory] = useState("Men's")
@@ -82,8 +94,9 @@ function App() {
   const openAdmin = async () => {
     setAdminOpen(true)
     try {
-      const response = await fetch('/api/admin/session')
-      const session = await response.json()
+      const response = await fetch('/api/admin/session', { credentials: 'include' })
+      const session = await readJsonResponse(response)
+      if (!response.ok) throw new Error(session.error || `Session check failed (HTTP ${response.status}).`)
       setAdminAuthenticated(Boolean(session.authenticated))
     } catch { setAdminAuthenticated(false) }
   }
@@ -92,8 +105,8 @@ function App() {
     setLoginBusy(true)
     setLoginError('')
     try {
-      const response = await fetch('/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: loginUser, password: loginPassword }) })
-      const result = await response.json()
+      const response = await fetch('/api/admin/login', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: loginUser, password: loginPassword }) })
+      const result = await readJsonResponse(response)
       if (!response.ok) throw new Error(result.error || 'Could not sign in.')
       setAdminAuthenticated(true)
       setLoginPassword('')
@@ -101,7 +114,7 @@ function App() {
     finally { setLoginBusy(false) }
   }
   const signOut = async () => {
-    await fetch('/api/admin/logout', { method: 'POST' }).catch(() => {})
+    await fetch('/api/admin/logout', { method: 'POST', credentials: 'include' }).catch(() => {})
     setAdminAuthenticated(false)
     setEditingId(null)
   }
