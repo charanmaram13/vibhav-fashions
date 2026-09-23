@@ -1,0 +1,8 @@
+export const products = [
+  { id: 'linen-shirt', name: 'The Everyday Linen Shirt', category: 'Men', type: 'Casual Shirts', price: 1490, sizes: ['S', 'M', 'L', 'XL'], image: 'https://images.unsplash.com/photo-1596755094514-f87e34085b2c?auto=format&fit=crop&w=900&q=85', tone: 'sand', badge: 'NEW' },
+  { id: 'weekend-set', name: 'Little Weekend Set', category: 'Kids', type: 'Casual Wear', price: 990, sizes: ['2–3Y', '4–5Y', '6–7Y'], image: 'https://images.unsplash.com/photo-1519238263530-99bdd11df2ea?auto=format&fit=crop&w=900&q=85', tone: 'sage', badge: 'NEW' },
+  { id: 'classic-overshirt', name: 'The Classic Overshirt', category: 'Men', type: 'Formal Wear', price: 1890, sizes: ['M', 'L', 'XL', 'XXL'], image: 'https://images.unsplash.com/photo-1598033129183-c4f50c736f10?auto=format&fit=crop&w=900&q=85', tone: 'clay' },
+  { id: 'sunny-day-dress', name: 'Sunny Day Dress', category: 'Kids', type: 'Ethnic Wear', price: 1190, sizes: ['2–3Y', '4–5Y', '6–7Y', '8–9Y'], image: 'https://images.unsplash.com/photo-1519238263530-99bdd11df2ea?auto=format&fit=crop&w=900&q=85', tone: 'rose' },
+  { id: 'soft-cotton-tee', name: 'Soft Cotton Tee', category: 'Men', type: 'T-Shirts', price: 690, sizes: ['S', 'M', 'L', 'XL'], image: 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?auto=format&fit=crop&w=900&q=85', tone: 'blue' },
+  { id: 'play-all-day', name: 'Play All Day Overalls', category: 'Kids', type: 'Casual Wear', price: 1290, sizes: ['2–3Y', '4–5Y', '6–7Y'], image: 'https://images.unsplash.com/photo-1503919005314-30d93d07d823?auto=format&fit=crop&w=900&q=85', tone: 'cream' },
+]
