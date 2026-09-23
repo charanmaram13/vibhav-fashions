@@ -1,5 +1,5 @@
-// Export the Express application itself as the Vercel Node function handler.
-// Keeping this catch-all entrypoint lets Express own every nested /api route.
-import app from '../server/index.js'
+// Catch one-segment API routes; explicit nested route files delegate to the
+// same Express app through this shared module.
+import app from './_express.js'
 
 export default app
