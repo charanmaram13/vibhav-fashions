@@ -110,13 +110,25 @@ function App() {
     setDraft({ name: '', category: 'Men', price: '', salePrice: '', sizes: [], description: '', image: '', isNewArrival: true, isFeatured: false })
   }
   const toggleSize = size => setDraft(current => ({ ...current, sizes: current.sizes.includes(size) ? current.sizes.filter(item => item !== size) : [...current.sizes, size] }))
-  const uploadPhoto = event => {
+  const uploadPhoto = async event => {
     const file = event.target.files?.[0]
     if (!file) return
     if (!file.type.startsWith('image/')) { setNotice('Choose an image file.'); return }
-    const reader = new FileReader()
-    reader.onload = () => setDraft(current => ({ ...current, image: reader.result }))
-    reader.readAsDataURL(file)
+    try {
+      const bitmap = await createImageBitmap(file)
+      const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.round(bitmap.width * scale)
+      canvas.height = Math.round(bitmap.height * scale)
+      canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+      bitmap.close()
+      const image = canvas.toDataURL('image/webp', 0.8)
+      if (image.length > 4 * 1024 * 1024) throw new Error('This photo is too large. Choose a smaller image.')
+      setDraft(current => ({ ...current, image }))
+    } catch (error) {
+      setNotice(error.message || 'Could not read that photo. Choose another image.')
+      window.setTimeout(() => setNotice(''), 3000)
+    }
   }
   const selectCategory = value => setCategory(value)
 

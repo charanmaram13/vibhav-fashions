@@ -3,6 +3,7 @@ import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypt
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { GridFSBucket, MongoClient, ObjectId } from 'mongodb'
 import { products as starterProducts } from '../src/data/products.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -37,16 +38,16 @@ app.disable('x-powered-by')
 app.use(express.json({ limit: '12mb' }))
 
 async function loadProducts() {
-  if (process.env.VERCEL) {
-    if (!process.env.BLOB_READ_WRITE_TOKEN) return starterProducts
-    const { list } = await import('@vercel/blob')
-    const { blobs } = await list({ prefix: 'catalog/products.json' })
-    const catalog = blobs.find(blob => blob.pathname === 'catalog/products.json')
-    if (!catalog) return starterProducts
-    const response = await fetch(catalog.url, { cache: 'no-store' })
-    if (!response.ok) throw new Error('Could not load the product catalog from Vercel Blob.')
-    return response.json()
+  if (process.env.MONGODB_URI) {
+    const { collection } = await getMongoStore()
+    let products = await collection.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).toArray()
+    if (!products.length) {
+      await collection.insertMany(starterProducts)
+      products = starterProducts
+    }
+    return products
   }
+  if (process.env.VERCEL) return starterProducts
   try {
     return JSON.parse(await readFile(productsFile, 'utf8'))
   } catch {
@@ -57,14 +58,45 @@ async function loadProducts() {
 }
 
 async function saveProducts(products) {
-  if (process.env.VERCEL) {
-    if (!process.env.BLOB_READ_WRITE_TOKEN) throw new Error('Product storage is not connected. Connect a Vercel Blob store to enable product changes.')
-    const { put } = await import('@vercel/blob')
-    await put('catalog/products.json', JSON.stringify(products), { access: 'public', addRandomSuffix: false, allowOverwrite: true })
-    return
-  }
+  if (process.env.VERCEL) throw new Error('Product storage is not connected. Configure MONGODB_URI to enable product changes.')
   await mkdir(dataDirectory, { recursive: true })
   await writeFile(productsFile, JSON.stringify(products, null, 2))
+}
+
+async function getMongoStore() {
+  const uri = process.env.MONGODB_URI
+  if (!uri) throw new Error('MongoDB is not connected. Configure MONGODB_URI to enable product changes.')
+  if (!globalThis.sriVaibhavMongoClientPromise) {
+    const client = new MongoClient(uri, { maxPoolSize: 5, serverSelectionTimeoutMS: 8000 })
+    globalThis.sriVaibhavMongoClientPromise = client.connect()
+  }
+  const client = await globalThis.sriVaibhavMongoClientPromise
+  const db = client.db(process.env.MONGODB_DB || 'sri_vaibhav_fashions')
+  return { collection: db.collection('products'), images: new GridFSBucket(db, { bucketName: 'productImages' }) }
+}
+
+async function storeProductImage(image) {
+  if (!process.env.MONGODB_URI || !image.startsWith('data:image/')) return image
+  const match = image.match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+=*)$/)
+  if (!match) throw new Error('Choose a JPEG, PNG, or WebP product photo.')
+  const buffer = Buffer.from(match[2], 'base64')
+  if (buffer.length > 3 * 1024 * 1024) throw new Error('Product photos must be 3 MB or smaller after compression.')
+  const { images } = await getMongoStore()
+  return new Promise((resolve, reject) => {
+    const upload = images.openUploadStream(`product-${Date.now()}`, { metadata: { contentType: match[1] } })
+    upload.once('error', reject)
+    upload.once('finish', () => resolve(`/api/images/${upload.id.toString()}`))
+    upload.end(buffer)
+  })
+}
+
+async function deleteStoredImage(image) {
+  const match = image?.match(/^\/api\/images\/([a-f\d]{24})$/i)
+  if (!match || !process.env.MONGODB_URI) return
+  try {
+    const { images } = await getMongoStore()
+    await images.delete(new ObjectId(match[1]))
+  } catch (error) { if (error.code !== 'ENOENT') console.error('Could not remove the old product photo:', error.message) }
 }
 
 function getSession(req) {
@@ -93,6 +125,19 @@ app.get('/api/health', (_req, res) => {
 app.get('/api/products', asyncRoute(async (_req, res) => {
   res.setHeader('Cache-Control', 'no-store')
   res.json(await loadProducts())
+}))
+
+app.get('/api/images/:id', asyncRoute(async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) return res.status(404).end()
+  const id = new ObjectId(req.params.id)
+  const { images } = await getMongoStore()
+  const file = await images.find({ _id: id }).limit(1).next()
+  if (!file) return res.status(404).end()
+  res.setHeader('Content-Type', file.metadata?.contentType || 'application/octet-stream')
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+  const stream = images.openDownloadStream(id)
+  stream.on('error', error => { if (!res.headersSent) res.status(404).end(); else res.destroy(error) })
+  stream.pipe(res)
 }))
 
 app.post('/api/admin/login', (req, res, next) => {
@@ -135,10 +180,12 @@ app.post('/api/admin/logout', (req, res) => {
 app.post('/api/products', requireAdmin, asyncRoute(async (req, res) => {
   const product = req.body
   if (!product?.name?.trim() || !Number.isFinite(Number(product.price)) || !product.image) return res.status(400).json({ error: 'A product name, valid price, and image are required.' })
-  const products = await loadProducts()
-  const saved = { ...product, id: `product-${randomBytes(8).toString('hex')}`, name: product.name.trim(), price: Number(product.price) }
-  products.unshift(saved)
-  try { await saveProducts(products) } catch (error) { return res.status(503).json({ error: error.message }) }
+  let saved
+  try {
+    saved = { ...product, id: `product-${randomBytes(8).toString('hex')}`, name: product.name.trim(), price: Number(product.price), image: await storeProductImage(product.image), createdAt: Date.now() }
+    if (process.env.MONGODB_URI) { const { collection } = await getMongoStore(); await collection.insertOne(saved) }
+    else { const products = await loadProducts(); products.unshift(saved); await saveProducts(products) }
+  } catch (error) { return res.status(503).json({ error: error.message }) }
   res.status(201).json(saved)
 }))
 
@@ -148,16 +195,25 @@ app.put('/api/products/:id', requireAdmin, asyncRoute(async (req, res) => {
   if (index === -1) return res.status(404).json({ error: 'Product not found.' })
   const incoming = req.body
   if (!incoming?.name?.trim() || !Number.isFinite(Number(incoming.price)) || !incoming.image) return res.status(400).json({ error: 'A product name, valid price, and image are required.' })
-  products[index] = { ...incoming, id: req.params.id, name: incoming.name.trim(), price: Number(incoming.price) }
-  try { await saveProducts(products) } catch (error) { return res.status(503).json({ error: error.message }) }
-  res.json(products[index])
+  let saved
+  try {
+    saved = { ...incoming, id: req.params.id, name: incoming.name.trim(), price: Number(incoming.price), image: await storeProductImage(incoming.image) }
+    if (process.env.MONGODB_URI) { const { collection } = await getMongoStore(); await collection.replaceOne({ id: req.params.id }, saved) }
+    else { products[index] = saved; await saveProducts(products) }
+  } catch (error) { return res.status(503).json({ error: error.message }) }
+  if (saved.image !== products[index].image) await deleteStoredImage(products[index].image)
+  res.json(saved)
 }))
 
 app.delete('/api/products/:id', requireAdmin, asyncRoute(async (req, res) => {
   const products = await loadProducts()
-  const next = products.filter(product => product.id !== req.params.id)
-  if (next.length === products.length) return res.status(404).json({ error: 'Product not found.' })
-  try { await saveProducts(next) } catch (error) { return res.status(503).json({ error: error.message }) }
+  const existing = products.find(product => product.id === req.params.id)
+  if (!existing) return res.status(404).json({ error: 'Product not found.' })
+  try {
+    if (process.env.MONGODB_URI) { const { collection } = await getMongoStore(); await collection.deleteOne({ id: req.params.id }) }
+    else await saveProducts(products.filter(product => product.id !== req.params.id))
+  } catch (error) { return res.status(503).json({ error: error.message }) }
+  await deleteStoredImage(existing.image)
   res.json({ deleted: true })
 }))
 
